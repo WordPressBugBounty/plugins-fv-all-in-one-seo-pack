@@ -8,12 +8,11 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
   // FIELDS
   //-------------------------------
 
-  /** Max numbers of chars in auto-generated description */
-  //var $maximum_description_length = 160;
-  var $maximum_description_length = 145;
-  
-  var $maximum_description_length_yellow = 134;
-  //var $maximum_title_length = 61;
+  /** Max numbers of chars in meta description */
+  var $maximum_description_length        = 145;
+  var $maximum_description_length_yellow = 70;
+  var $maximum_description_length_green  = 110;
+
   var $maximum_title_length = 56;
   
   /** Minimum number of chars an excerpt should be so that it can be used
@@ -252,17 +251,13 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
    */
   function capitalize($s)
   {
-    $s = trim($s);
-    $tokens = explode(' ', $s);
-    while (list($key, $val) = each($tokens)) {
-            $tokens[$key] = trim($tokens[$key]);
-            $tokens[$key] = strtoupper(substr($tokens[$key], 0, 1)) . substr($tokens[$key], 1);
+    if ( function_exists( 'mb_convert_case' ) ) {
+      return mb_convert_case( trim( $s ), MB_CASE_TITLE, 'UTF-8');
+    } else {
+      return ucwords( trim( $s ) );
     }
-    $s = implode(' ', $tokens);
-    return $s;
-    ///return mb_convert_case($s, MB_CASE_TITLE, 'UTF-8');
   }
-  
+
   function curPageURL() {
    $pageURL = 'http';
    if ( isset($_SERVER["HTTPS"]) && $_SERVER["HTTPS"] == "on") {$pageURL .= "s";}
@@ -290,7 +285,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     
     $post = $wp_query->get_queried_object();
     
-    return get_option('show_on_front') == 'page' && is_home() && $post->ID == get_option('page_for_posts');
+    return get_option('show_on_front') == 'page' && is_home() && ! empty( $post->ID ) && $post->ID == get_option('page_for_posts');
   }
 
   /**
@@ -456,14 +451,16 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     load_plugin_textdomain('fv_seo', false, dirname(plugin_basename(__FILE__)) . "/languages");
   }
   
-  function remove_canonical() {
+  function remove_canonical_for_custom_canonical() {
     if (is_single() || is_page() || $this->is_static_posts_page()) {
       global $wp_query, $fvseop_options;
       $post = $wp_query->get_queried_object();
     
+      if ( ! empty( $post->ID ) ) {
       $custom_canonical = trim( get_post_meta($post->ID, "_aioseop_custom_canonical", true) );
       if( $custom_canonical && $fvseop_options['aiosp_show_custom_canonical'] ) {
         remove_action('wp_head', 'rel_canonical');
+        }
       }
     }
   }
@@ -493,7 +490,12 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     }
     
 
-    if( $wp_query->is_404 && isset($wp_query->query['paged']) && $wp_query->query['paged'] > 0 ) {
+    /**
+     * Detect 404 error due to paging out of bounds for archives.
+     * 
+     * Do not do this for search.
+     */
+    if( $wp_query->is_404 && isset($wp_query->query['paged']) && $wp_query->query['paged'] > 0 && empty( $wp_query->query['s'] ) ) {
 
       $aArgs = $wp_query->query;
       unset($aArgs['paged']);
@@ -532,10 +534,9 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
       } else if( $objCheckPaging->is_author ) {
         if( isset($wp_query->query['author_name']) ) {
           $objAuthor = get_user_by( 'slug', $wp_query->query['author_name'] ); 
-          $iAuthorId = $objAuthor->ID;
-        }
-        if( isset($iAuthorId) ) {
-          $sLink = get_author_posts_url($iAuthorId);
+          if ( ! empty( $objAuthor->ID ) ) {
+            $sLink = get_author_posts_url( $objAuthor->ID );
+          }
         }
         
       }
@@ -595,8 +596,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
       return;
     }
                 
-    global $wp_query;
-    global $fvseop_options;
+    global $wp_query, $fvseop_options, $wp_locale;
 
     $post = $wp_query->get_queried_object();
                 
@@ -655,22 +655,6 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
                 
     $meta_string = null;
 
-    if ($this->is_static_posts_page())
-    {
-      // TODO: strip_tags return a string with all HTML and PHP tags stripped from a given str. Since
-      // it uses a tag stripping state machine, probably it's better to remove this function if you
-      // never use weird post titles.
-      //
-      // The apply_filters on 'single_post_title' ensure any previous plugin is applied.
-      //
-      // I would like to change this line to
-      //
-      // $title = $post->post_title;
-      //
-      // and save a lot of CPU cycles.
-      $title = strip_tags(apply_filters('single_post_title', $post->post_title));
-    }
-
     if (is_single() || is_page())
     {
       $fvseo_disable = htmlspecialchars(stripcslashes(get_post_meta($post->ID, '_aioseop_disable', true)));
@@ -699,7 +683,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     }
 
                 /// Modification - always enabled
-    if ($fvseop_options['aiosp_rewrite_titles']     || 1>0)
+    if ( ! empty( $fvseop_options['aiosp_rewrite_titles'] ) && $fvseop_options['aiosp_rewrite_titles'] || 1>0)
     {
       // make the title rewrite as short as possible
       if (function_exists('ob_list_handlers'))
@@ -761,6 +745,10 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     {
       $description = $this->internationalize(category_description());
     }
+    elseif ( ! empty( $fvseop_options['aiosp_date_archive_description'] ) && is_month() )
+    {
+      $description = $fvseop_options['aiosp_date_archive_description'];
+    }
 
     if (isset($description) && (strlen($description) > $this->minimum_description_length) &&
       !(is_home() && is_paged()))
@@ -792,6 +780,10 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
       $description = str_replace('%blog_description%', get_bloginfo('description'), $description);
       $description = str_replace('%wp_title%', $this->get_original_title(), $description);
       $description = trim( str_replace('%page%', $this->paged_description(), $description) );
+
+      $description = trim( str_replace('%month%', is_month() ? $wp_locale->get_month( get_query_var( 'monthnum' ) ) : '', $description) );
+      $description = trim( str_replace('%year%', get_query_var( 'year' ), $description) );
+
       $description = __( $description );
 
       if ($fvseop_options['aiosp_can'] && is_attachment())
@@ -832,12 +824,12 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     }
     
                 /// Added noindex for search
-    if ((is_category() && $fvseop_options['aiosp_category_noindex']) ||
-      (!is_category() && is_archive() &&!$is_tag && $fvseop_options['aiosp_archive_noindex']) ||
-      ($fvseop_options['aiosp_tags_noindex'] && $is_tag) ||
-                        (is_search() && $fvseop_options['aiosp_search_noindex'])
-                        )
-    {
+    if (
+      ! empty( $fvseop_options['aiosp_category_noindex'] ) && $fvseop_options['aiosp_category_noindex'] && is_category() ||
+      ! empty( $fvseop_options['aiosp_archive_noindex'] ) && $fvseop_options['aiosp_archive_noindex'] && ! is_category() && is_archive() && ! $is_tag ||
+      ! empty( $fvseop_options['aiosp_tags_noindex'] ) && $fvseop_options['aiosp_tags_noindex'] && $is_tag ||
+      ! empty( $fvseop_options['aiosp_search_noindex'] ) && $fvseop_options['aiosp_search_noindex'] && ( is_search() || ! empty( $_GET['s'] ) )
+    ) {
       if (isset($meta_string))
       {
         $meta_string .= "\n";
@@ -851,9 +843,9 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
       }
     }
     
-    $page_meta = stripcslashes($fvseop_options['aiosp_page_meta_tags']);
-    $post_meta = stripcslashes($fvseop_options['aiosp_post_meta_tags']);
-    $home_meta = stripcslashes($fvseop_options['aiosp_home_meta_tags']);
+    $page_meta = ! empty( $fvseop_options['aiosp_page_meta_tags'] ) ? stripcslashes($fvseop_options['aiosp_page_meta_tags']) : false;
+    $post_meta = ! empty( $fvseop_options['aiosp_post_meta_tags'] ) ? stripcslashes($fvseop_options['aiosp_post_meta_tags']) : false;
+    $home_meta = ! empty( $fvseop_options['aiosp_home_meta_tags'] ) ? stripcslashes($fvseop_options['aiosp_home_meta_tags']) : false;
     
     if (is_page() && isset($page_meta) && !empty($page_meta) || $this->is_static_posts_page())
     {
@@ -933,13 +925,11 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     
     /// check if meta is present
     if (is_single() || is_page() || $this->is_static_posts_page()) {
-      $custom_canonical = trim( get_post_meta($post->ID, "_aioseop_custom_canonical", true) );
+      $custom_canonical = ! empty( $post->ID ) ? trim( get_post_meta($post->ID, "_aioseop_custom_canonical", true) ) : false;
     }
     ///
     
-    //if ($fvseop_options['aiosp_can'])
-    if ($fvseop_options['aiosp_can'] || ( isset( $custom_canonical ) && isset($fvseop_options['aiosp_show_custom_canonical']) && $fvseop_options['aiosp_show_custom_canonical']  ) )
-    /// End of modification
+    if ( ! empty( $fvseop_options['aiosp_can'] ) && $fvseop_options['aiosp_can'] || ( isset( $custom_canonical ) && isset($fvseop_options['aiosp_show_custom_canonical']) && $fvseop_options['aiosp_show_custom_canonical']  ) )
     {
       if( (isset($custom_canonical) && $custom_canonical) && (isset($fvseop_options['aiosp_show_custom_canonical']) && $fvseop_options['aiosp_show_custom_canonical']) ) {
         $url = $custom_canonical;
@@ -1059,13 +1049,13 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
       {
         $link = get_permalink($pageid);
         $link = $this->yoast_get_paged($link);
-        $link = trailingslashit($link);
+        $link = user_trailingslashit($link);
       }
       else
       {
         $link = get_option('home');
         $link = $this->yoast_get_paged($link);
-        $link = trailingslashit($link);
+        $link = user_trailingslashit($link);
       }
     }
     else
@@ -1098,7 +1088,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
   }
   
   
-  function paged_description($description = NULL)
+  function paged_description( $description = '' )
   {
     // the page number if paged
     global $paged;
@@ -1126,17 +1116,18 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
   {
     global $fvseop_options;
 
-    $description = trim(stripcslashes($this->internationalize(get_post_meta($post->ID, "_aioseop_description", true))));
+    $description = ! empty( $post->ID ) ? get_post_meta($post->ID, "_aioseop_description", true) : false;
+    $description = trim(stripcslashes($this->internationalize( $description )));
 
     if (!$description)
     {
       /// Addition - condition added
-      if(!$fvseop_options['aiosp_dont_use_excerpt']) {
+      if ( ! $fvseop_options['aiosp_dont_use_excerpt'] && ! empty( $post->post_excerpt ) ) {
         $description = $this->trim_excerpt_without_filters_full_length($this->internationalize($post->post_excerpt));
       }
       /// End of addition
 
-      if (!$description && $fvseop_options["aiosp_generate_descriptions"])
+      if ( ! $description && $fvseop_options["aiosp_generate_descriptions"] && ! empty( $post->post_content ) )
       {
         $description = $this->trim_excerpt_without_filters($this->internationalize($post->post_content));
       }       
@@ -1362,8 +1353,9 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
         else {
           $categories = get_the_category();
           
-          if (count($categories) > 0)
+          if ( ! empty( $categories[0] ) ) {
             $category = $categories[0]->cat_name;
+          }
 
           $title_format = stripslashes( $fvseop_options['aiosp_post_title_format'] );
         }
@@ -1374,10 +1366,10 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
         $new_title = str_replace('%post_type_name%', $post_type_name, $new_title);
         $new_title = str_replace('%category%', $category, $new_title);
         $new_title = str_replace('%category_title%', $category, $new_title);
-        $new_title = str_replace('%post_author_login%', $authordata->user_login, $new_title);
-        $new_title = str_replace('%post_author_nicename%', $authordata->user_nicename, $new_title);
-        $new_title = str_replace('%post_author_firstname%', ucwords($authordata->first_name), $new_title);
-        $new_title = str_replace('%post_author_lastname%', ucwords($authordata->last_name), $new_title);
+        $new_title = str_replace('%post_author_login%', ! empty( $authordata->user_login ) ? $authordata->user_login : '', $new_title);
+        $new_title = str_replace('%post_author_nicename%', ! empty( $authordata->user_nicename ) ? $authordata->user_nicename : '', $new_title);
+        $new_title = str_replace('%post_author_firstname%', ! empty( $authordata->first_name ) ? ucwords($authordata->first_name) : '', $new_title);
+        $new_title = str_replace('%post_author_lastname%', ! empty( $authordata->last_name ) ? ucwords($authordata->last_name) : '', $new_title);
       }
       /// Addition
       else
@@ -1469,22 +1461,24 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
           $title = $this->internationalize( /*wp_title('', false)*/ get_the_title($post->ID) );
         }
                                 
-                                if( $fvseop_options['aiosp_rewrite_titles'] ) {
+        if( $fvseop_options['aiosp_rewrite_titles'] ) {
+          $title_format = stripslashes( $fvseop_options['aiosp_page_title_format'] );
 
-                                    $title_format = stripslashes( $fvseop_options['aiosp_page_title_format'] );
-    
-                                    $new_title = str_replace('%blog_title%', $this->internationalize(get_bloginfo('name')), $title_format);
-                                    $new_title = str_replace('%blog_description%', $this->internationalize(get_bloginfo('description')), $new_title);
-                                    $new_title = str_replace('%page_title%', $title, $new_title);
-                                    $new_title = str_replace('%page_author_login%', $authordata->user_login, $new_title);
-                                    $new_title = str_replace('%page_author_nicename%', $authordata->user_nicename, $new_title);
-                                    $new_title = str_replace('%page_author_firstname%', ucwords($authordata->first_name), $new_title);
-                                    $new_title = str_replace('%page_author_lastname%', ucwords($authordata->last_name), $new_title);
-                                
-                                }
-                                /// Addition
-                                else
-                                    $new_title = $title;
+          $replacements = array(
+            '%blog_title%'            => $this->internationalize( get_bloginfo( 'name' ) ),
+            '%blog_description%'      => $this->internationalize( get_bloginfo( 'description' ) ),
+            '%page_title%'            => $title,
+            '%page_author_login%'     => ! empty( $authordata->user_login ) ? $authordata->user_login : '',
+            '%page_author_nicename%'  => ! empty( $authordata->user_nicename ) ? $authordata->user_nicename : '',
+            '%page_author_firstname%' => ! empty( $authordata->first_name ) ? ucwords( $authordata->first_name ) : '',
+            '%page_author_lastname%'  => ! empty( $authordata->last_name ) ? ucwords( $authordata->last_name ) : '',
+          );
+
+          $new_title = str_replace( array_keys( $replacements ), array_values( $replacements ), $title_format );
+
+        } else {
+          $new_title = $title;
+        }
 
         $title = trim($new_title);
         $title = apply_filters('fvseop_title_page', $title);
@@ -1562,6 +1556,8 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
       else {
         $title_format = stripslashes( $fvseop_options['aiosp_archive_title_format'] );
         $t_sep = ' ';
+        $archive_title = false;
+
         if( is_date() ) {
           //  taken from wp_title()
           global $wp_locale;
@@ -1694,7 +1690,11 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
          /// optimalization HACKs by peter
          /// Pre-cache post meta and tags and categories if needed and if WP version permits it
          $aIDs = array();
-         foreach( $posts as $objPost ) $aIDs[] = $objPost->ID;
+         foreach( $posts as $objPost ) {
+            if ( ! empty( $objPost->ID ) ) {
+               $aIDs[] = $objPost->ID;
+            }
+         }
 
          if( function_exists( 'update_meta_cache' ) ) update_meta_cache( 'post', $aIDs );
          if( ( $fvseop_options['aiosp_use_tags_as_keywords'] || ( $fvseop_options['aiosp_use_categories'] && !is_page() ) )
@@ -2211,15 +2211,17 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
                   <?php _e("This option will automatically generate Canonical URLS for your entire WordPress installation.  This will help to prevent duplicate content penalties by <a href='http://googlewebmastercentral.blogspot.com/2009/02/specify-your-canonical.html' target='_blank'>Google</a>.", 'fv_seo')?>
                 </div>
             </p>
-            <p id="fvseo_attachments">
-                <a class="help-trigger">
-                  <?php _e('Redirect attachment links to the file URLs:', 'fv_seo')?>
-                </a>
-                <input type="checkbox" name="fvseo_attachments" <?php if ($fvseop_options['fvseo_attachments']) echo 'checked="checked"'; ?>/>
-                <div class="help-text">
-                  <?php _e("Get rid of /?attachment_id={attachment_id} and /year/month/post-name/attachment-name kind of pages. Creates 301 redirections and replaces such links in content. Recommended.", 'fv_seo')?>
-                </div>
-            </p>                 
+            <?php if ( $fvseop_options['fvseo_attachments'] || get_option( 'wp_attachment_pages_enabled' ) ) : ?>
+              <p id="fvseo_attachments">
+                  <a class="help-trigger">
+                    <?php _e('Redirect attachment links to the file URLs:', 'fv_seo')?>
+                  </a>
+                  <input type="checkbox" name="fvseo_attachments" <?php if ($fvseop_options['fvseo_attachments']) echo 'checked="checked"'; ?>/>
+                  <div class="help-text">
+                    <?php _e("Get rid of /?attachment_id={attachment_id} and /year/month/post-name/attachment-name kind of pages. Creates 301 redirections and replaces such links in content. Recommended.", 'fv_seo')?>
+                  </div>
+              </p>
+            <?php endif; ?>
             <p id="fvseo_shortlinks">
                 <a class="help-trigger">
                   <?php _e('Enable shortlinks in header:', 'fv_seo')?>
@@ -2569,6 +2571,15 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
             </p>
             <p>
                 <a class="help-trigger">
+                  <?php _e('Date Archives Description:', 'fv_seo')?>
+                </a><br />
+                <textarea cols="57" rows="2" name="fvseo_date_archive_description"><?php if( isset( $fvseop_options['aiosp_date_archive_description'] ) ) echo esc_attr(stripcslashes($fvseop_options['aiosp_date_archive_description']))?></textarea>
+                <div class="help-text">
+                  <?php _e('The META description for date archives, you can use %month% and %year%. Independent of any other options, the default is no META description at all if this is not set.', 'fv_seo')?>
+                </div>
+            </p>
+            <p>
+                <a class="help-trigger">
                   <?php _e('Additional Post Headers:', 'fv_seo')?>
                 </a><br />
                 <textarea cols="57" rows="2" name="fvseo_post_meta_tags"><?php echo htmlspecialchars(stripcslashes($fvseop_options['aiosp_post_meta_tags']))?></textarea>
@@ -2779,6 +2790,16 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
         <input type="text" class="regular-text" size="63" name="fvseo_statcounter_security" placeholder="sc_security" value="<?php if (isset($fvseop_options['aiosp_statcounter_security'])) echo esc_attr(stripcslashes($fvseop_options['aiosp_statcounter_security']))?>" />
         <div class="help-text">
           <?php _e('Enter your project ID and security ID. You can obtain them from Statcounter administation > Project > Reinstall Code > Default Guide. Look for <i>sc_project</i> and <i>sc_security</i> variables in code.', 'fv_seo')?>
+        </div>
+    </p>
+    <p>
+        <a class="help-trigger">
+        <?php _e('Use full-featured StatCounter tracking code:', 'fv_seo')?>
+        </a>
+    
+        <input type="checkbox" name="fvseo_statcounter_full" <?php if ( !empty($fvseop_options['aiosp_statcounter_full']) && $fvseop_options['aiosp_statcounter_full'] ) echo "checked=\"1\""; ?>/>
+        <div class="help-text">
+          Normally we only load the tracking image to avoid loading external scripts, but in turn you don't get stats about user browser size etc. Enable this to get full StatCounter tracking.
         </div>
     </p>
   <?php
@@ -3066,9 +3087,11 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
 
         $fvseop_options['aiosp_statcounter_security'] = isset( $_POST['fvseo_statcounter_security'] ) ? $_POST['fvseo_statcounter_security'] : NULL;
         $fvseop_options['aiosp_statcounter_project'] = isset( $_POST['fvseo_statcounter_project'] ) ? $_POST['fvseo_statcounter_project'] : NULL;
+        $fvseop_options['aiosp_statcounter_full'] = isset( $_POST['fvseo_statcounter_full'] ) ? $_POST['fvseo_statcounter_full'] : NULL;
 
 
         $fvseop_options['aiosp_ex_pages'] = isset( $_POST['fvseo_ex_pages'] ) ? $_POST['fvseo_ex_pages'] : NULL;
+        $fvseop_options['aiosp_date_archive_description'] = isset( $_POST['fvseo_date_archive_description'] ) ? $_POST['fvseo_date_archive_description'] : NULL;
         $fvseop_options['aiosp_use_tags_as_keywords'] = isset( $_POST['fvseo_use_tags_as_keywords'] ) ? $_POST['fvseo_use_tags_as_keywords'] : NULL;
 
         $fvseop_options['aiosp_search_noindex'] = isset( $_POST['fvseo_search_noindex'] ) ? $_POST['fvseo_search_noindex'] : NULL;
@@ -3240,7 +3263,12 @@ add_meta_box( 'fv_simpler_seo_interface_options', 'Extra Interface Options', arr
 add_meta_box( 'fv_simpler_seo_advanced', 'Advanced Options', array( $this, 'admin_settings_advanced' ), 'fv_simpler_seo_settings', 'normal' );
 add_meta_box( 'admin_settings_tracking_codes', 'Tracking codes', array( $this, 'admin_settings_tracking_codes' ), 'fv_simpler_seo_settings', 'normal' );
 add_meta_box( 'fv_simpler_seo_sitemap', 'XML Sitemaps & Google News feed', array( $this, 'admin_settings_sitemap' ), 'fv_simpler_seo_settings', 'normal' );
-add_meta_box( 'fv_simpler_seo_calendar', 'Basic Events Functions', array( $this, 'admin_settings_calendar' ), 'fv_simpler_seo_settings', 'normal' );
+
+// Deprecated
+if ( ! empty( $fvseop_options['fvseo_events'] ) && $fvseop_options['fvseo_events'] ) {
+  add_meta_box( 'fv_simpler_seo_calendar', 'Basic Events Functions', array( $this, 'admin_settings_calendar' ), 'fv_simpler_seo_settings', 'normal' );
+}
+
 add_meta_box( 'fv_simpler_seo_import', 'Import', array( $this, 'admin_settings_import' ), 'fv_simpler_seo_settings', 'normal' );
 
 ?>            
@@ -3522,12 +3550,17 @@ add_meta_box( 'fv_simpler_seo_import', 'Import', array( $this, 'admin_settings_i
       
       $aImage = array();
       if( !isset($fvseop_options['social_meta_facebook']) || $fvseop_options['social_meta_facebook'] || !isset($fvseop_options['social_meta_twitter']) || $fvseop_options['social_meta_twitter'] ) {
+
+            add_filter( 'pre_wp_get_loading_optimization_attributes', '__return_empty_array' );
+
             if( $thumb = get_the_post_thumbnail($post->ID,'large') ) {
                 $sTwitterCard = 'summary_large_image';
               } else {
                 $thumb = get_the_post_thumbnail($post->ID,'thumbnail');
                 $sTwitterCard = 'summary';
               }
+
+              remove_filter( 'pre_wp_get_loading_optimization_attributes', '__return_empty_array' );
               
               //take thumb name for comparing
               if( !empty($thumb) && preg_match( '~^[\s\S]*src=["\']([^"\']+)["\'][\s\S]*$~', $thumb, $thumb_src ) ){
@@ -3570,7 +3603,10 @@ add_meta_box( 'fv_simpler_seo_import', 'Import', array( $this, 'admin_settings_i
                   //if there are less than 2 images in array, save current, size doesn't matter
                   $contentImages[] = array( 'width' => isset($img_width[1]) ? $img_width[1] : 0, 'height' => isset($img_height[1]) ? $img_height[1] : 0, 'path'=> $img_url );
                 }
-                else if(intval($img_width[1]) > 200 && intval($img_height[1]) > 200){
+                else if(
+                  ! empty( $img_width[1] ) && intval( $img_width[1] ) > 200 &&
+                  ! empty( $img_height[1] ) && intval( $img_height[1] ) > 200
+                ) {
                   
                   //if actual image is wider than img on postion 0, save to temp for later compare
                   if( $contentImages[0]['width'] < $img_width[1] ){
@@ -3680,22 +3716,35 @@ add_meta_box( 'fv_simpler_seo_import', 'Import', array( $this, 'admin_settings_i
     if( isset($fvseop_options['fvseo_attachments']) && !$fvseop_options['fvseo_attachments'] ) {
       return $content;
     }
-    
-    global $wpdb;
-    //$wpdb->queries[] = 'start';
-    $content = preg_replace_callback( '~<a[^>]*?href="(.*?)"[^>]*?rel=".*?wp-att-(\d+).*?"[^>]*?>\s*?<img[^>]*?src="(.*?)"[^>]*?class=".*?wp-image-(\d+).*?"[^>]*?>\s*?</a>~', array( $this, 'replace_attachment_links_callback' ), $content );
+
+    // Get all anchors which nest image and have wp-att-{attachment id} in rel attribute
+    $content = preg_replace_callback( '~<a[^>]*rel="[^"]*wp-att-[^>]*>\s*<img[^>]*>\s*</a>~', array( $this, 'replace_attachment_links_callback' ), $content );
     return $content;
   }
   
   
   
   
-  function replace_attachment_links_callback( $aMatch ) {  
-    if( $aMatch[4] == $aMatch[2] ) {
-      $aMatch[0] = str_replace( $aMatch[1], preg_replace( '~-\d{3,4}x\d{3,4}(\.\S{3,4})$~', '$1', $aMatch[3]), $aMatch[0] );
+  function replace_attachment_links_callback( $aMatch ) {
+    $html = $aMatch[0];
+
+    // Is the linked to attachment ID matching the image ID?
+    preg_match( '~wp-att-(\d+)~', $html, $rel_id );
+    preg_match( '~wp-image-(\d+)~', $html, $image_id );
+
+    if ( $rel_id && $image_id && $rel_id[1] == $image_id[1] ) {
+      preg_match( '~href=[\'"](.*?)[\'"]~', $html, $href );
+      preg_match( '~src=[\'"](.*?)[\'"]~', $html, $src );
+
+      if ( $href && $src ) {
+
+        // Remove the image dimensions from the URL to get full size
+        $full_size = preg_replace( '~-\d{3,4}x\d{3,4}(\.\S{3,4})$~', '$1', $src[1] );
+        $html = str_replace( $href[1], $full_size, $html );
+      }
     }
-    
-    return $aMatch[0];
+
+    return $html;
   }
 
 
@@ -3788,7 +3837,7 @@ add_meta_box( 'fv_simpler_seo_import', 'Import', array( $this, 'admin_settings_i
       if( $dim_author = $this->_get_setting('aiosp_ganalytics_dim_author') ) {
         $user = get_userdata($post->post_author);
         $extra_dimensions_config[ $dim_date ] = 'post_author'; 
-        $extra_dimensions_values['post_author'] = $user->display_name;
+        $extra_dimensions_values['post_author'] = ! empty( $user->display_name ) ? $user->display_name : 'no-user';
       }
       
       if( $this->_get_setting('aiosp_ganalytics_cats') ){
@@ -3906,18 +3955,31 @@ gtag('js', new Date());
 
       $security = $this->_get_setting('aiosp_statcounter_security');
 
-      echo stripcslashes('
+      if( $this->_get_setting('aiosp_statcounter_full') ) {
+        echo stripcslashes('<!-- Start of StatCounter Code for Default Guide -->
 <script type="text/javascript">
 var sc_project='.$sc_project.'; 
 var sc_invisible=1; 
 var sc_security="'.$security.'"; 
+              var sc_https=1; 
+              var scJsHost = (("https:" == document.location.protocol) ?
+              "https://secure." : "http://www.");
+              document.write("<sc"+"ript type=\'text/javascript\' src=\'" +
+              scJsHost+
+              "statcounter.com/counter/counter.js\' defer></"+"script>");
 </script>
-<script type="text/javascript" src="https://www.statcounter.com/counter/counter.js" async></script>
-<noscript><div class="statcounter"><a title="Web Analytics" href="https://statcounter.com/"
+              <noscript><div class="statcounter"><a title="free hit
+              counter" href="http://statcounter.com/free-hit-counter/"
 target="_blank"><img class="statcounter"
 src="//c.statcounter.com/'.$sc_project.'/0/'.$security.'/1/"
-alt=Web Analytics"
-referrerPolicy="no-referrer-when-downgrade"></a></div></noscript>') . "\n";
+              alt="free hit counter"></a></div></noscript>
+              <!-- End of StatCounter Code for Default Guide -->') . "\n";
+
+      } else {
+        echo stripcslashes('<script type="text/javascript">var img = document.createElement("img");img.src = "//c.statcounter.com/'.$sc_project.'/0/'.$security.'/1/"</script>') . "\n";
+        echo stripcslashes('<noscript><img class="statcounter" src="//c.statcounter.com/'.$sc_project.'/0/'.$security.'/1/" alt="free hit counter"></noscript>');
+
+      }
     }
   }
 
