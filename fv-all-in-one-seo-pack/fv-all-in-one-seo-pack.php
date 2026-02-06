@@ -3,12 +3,12 @@
 Plugin Name: FV Simpler SEO
 Plugin URI: http://foliovision.com/seo-tools/wordpress/plugins/fv-all-in-one-seo-pack
 Description: Simple and effective SEO. Non-invasive, elegant. Ideal for client facing projects. | <a href="options-general.php?page=fv_simpler_seo">Options configuration panel</a>
-Version: 1.9.6
+Version: 1.9.7
 Author: Foliovision
 Author URI: http://foliovision.com
 */
 
-$fv_simpler_seo_version = '1.9.6';
+$fv_simpler_seo_version = '1.9.7';
 $fvseop_options = get_option('aioseop_options');
 
 global $fvseop_default_options;
@@ -72,6 +72,7 @@ if( !$fvseop_options ) fvseop_mrt_mkarry();
 
 require( dirname(__FILE__).'/utf8_tables.php' );
 require( dirname(__FILE__).'/fv_simpler_seo.class.php' );
+require( dirname(__FILE__).'/class.fv-simpler-seo-json-ld.php' );
 
 function fvseop_mrt_mkarry()
 {
@@ -179,7 +180,7 @@ function fvseop_filter_callback($matches)
 		$menulabel = $matches[4];
                
   /// Addition
-  $longtitle = stripslashes(get_post_meta($postID, '_aioseop_title', true));
+  $longtitle = stripslashes(get_post_meta($postID, '_aioseo_title', true));
             
   $menulabel = __( $menulabel );  
   $longtitle = __( $longtitle );  
@@ -218,10 +219,10 @@ function fvseo_meta()
 		$post_id = $post_id->ID;
 	}
 	$url = str_replace('http://','',get_permalink());
- 	$keywords = esc_attr(htmlspecialchars(stripcslashes(get_post_meta($post_id, '_aioseop_keywords', true))));
-	$title = esc_attr(htmlspecialchars(stripcslashes(get_post_meta($post_id, '_aioseop_title', true))));
+ 	$keywords = esc_attr(htmlspecialchars(stripcslashes(get_post_meta($post_id, '_aioseo_keywords', true))));
+	$title = esc_attr(htmlspecialchars(stripcslashes(get_post_meta($post_id, '_aioseo_title', true))));
 	$custom_canonical = esc_attr(htmlspecialchars(stripcslashes(get_post_meta($post_id, '_aioseop_custom_canonical', true))));
-	$description = esc_attr(htmlspecialchars(stripcslashes(get_post_meta($post_id, '_aioseop_description', true))));
+	$description = esc_attr(htmlspecialchars(stripcslashes(get_post_meta($post_id, '_aioseo_description', true))));
 	$fvseo_meta = esc_attr(htmlspecialchars(stripcslashes(get_post_meta($post_id, '_aioseop_meta', true))));
 	$fvseo_disable = esc_attr(htmlspecialchars(stripcslashes(get_post_meta($post_id, '_aioseop_disable', true))));
 	$fvseo_titleatr = esc_attr(htmlspecialchars(stripcslashes(get_post_meta($post_id, '_aioseop_titleatr', true))));
@@ -501,7 +502,7 @@ jQuery(document).ready(function($) {
                 $localized_description = fvseo_get_localized_string($description, $language);
               ?>
               <p>
-                  <?php _e('Meta Description:', 'fv_seo') ?> (<?php echo qtrans_getLanguageName($language); ?>) <abbr title="<?php _e('Displayed in search engine results. Can be called inside of template file with', 'fv_seo') ?>&lt;?php echo get_post_meta('_aioseop_description',$post->ID); ?&gt;">(?)</abbr>
+                  <?php _e('Meta Description:', 'fv_seo') ?> (<?php echo qtrans_getLanguageName($language); ?>) <abbr title="<?php _e('Displayed in search engine results. Can be called inside of template file with', 'fv_seo') ?>&lt;?php echo get_post_meta('_aioseo_description',$post->ID); ?&gt;">(?)</abbr>
                   <textarea id="fvseo_description_input_<?php echo $language; ?>" class="input" name="fvseo_description_<?php echo $language; ?>" rows="2" 
                     onkeydown="countChars( this, document.getElementById('fvseo_description_length_<?php echo $language; ?>'), '<?php echo $language ?>')" 
                     onkeyup="countChars( this, document.getElementById('fvseo_description_length_<?php echo $language; ?>'), '<?php echo $language ?>');"><?php echo $localized_description ?></textarea>
@@ -528,7 +529,7 @@ jQuery(document).ready(function($) {
             }
             $fvseo_description_input_description = $description;
             ?>
-            <?php _e('Meta Description:', 'fv_seo') ?> <abbr title="<?php _e('Displayed in search engine results. Can be called inside of template file with', 'fv_seo') ?> &lt;?php echo get_post_meta('_aioseop_description',$post->ID); ?&gt;">(?)</abbr>
+            <?php _e('Meta Description:', 'fv_seo') ?> <abbr title="<?php _e('Displayed in search engine results. Can be called inside of template file with', 'fv_seo') ?> &lt;?php echo get_post_meta('_aioseo_description',$post->ID); ?&gt;">(?)</abbr>
 
             <div id="fv-seo-description-input-container">
               <textarea id="fvseo_description_input" class="input" name="fvseo_description" rows="2" onkeydown="countChars( this, document.getElementById('fvseo_description_length'), 'default')"
@@ -751,14 +752,14 @@ function fvseo_check_empty_clientside() {
   global $fvseo, $fvseop_options;
 ?>
 <script language="javascript" type="text/javascript">
-jQuery(document).ready( function($) {
+jQuery( function($) {
   var target = null;
-  jQuery('#post :input, #post-preview').focus(function() {
+  jQuery('#post :input, #post-preview').on( 'focus', function() {
     target = this;
   });
 
   <?php // Prevent post saving if meta description is empty and fvseo_publ_warnings is enabled ?>
-  jQuery("#post").submit(function(){
+  jQuery("#post").on( 'submit', function(){
     if ( jQuery(target).is(':input') && ( jQuery(target).val() == 'Publish' || jQuery(target).val() == 'Update' ) && jQuery("#fvseo_description_input").val().length < <?php echo absint( $fvseo->maximum_description_length_yellow ); ?> ) {
       if ( jQuery( '#fvseo_noindex' ).prop( 'checked' ) ) {
         $( '.fv_simpler_seo_warning' ).remove();
@@ -855,7 +856,7 @@ jQuery(document).ready( function($) {
     }
 
     <?php // Selectors for: Classic Editor, Block Editor ?>
-    let where = $( '#major-publishing-actions, .editor-header__settings .is-primary' );
+    let where = $( '#major-publishing-actions:first, .editor-header__settings .is-primary' );
 
     <?php // When using Gutenberg .editor-post-save-draft might not be there yet, so try again later ?>
     if ( 0 === where.length ) {
@@ -897,7 +898,7 @@ jQuery(document).ready( function($) {
         return;
       }
 
-      where.hover( show_missing_seo_warnings );
+      where.on( 'mouseenter', show_missing_seo_warnings );
     }
 
     show_missing_seo_warnings_init();
@@ -977,8 +978,8 @@ function fvseo_genesis_waring(){
  */
 foreach(
   array(
-    '_aioseop_title' => 'FV Long Title',
-    '_aioseop_description' => 'FV Meta Description',
+    '_aioseo_title' => 'FV Long Title',
+    '_aioseo_description' => 'FV Meta Description',
   ) as $meta_key => $description
 ) {
   register_meta( 'post', $meta_key, array(

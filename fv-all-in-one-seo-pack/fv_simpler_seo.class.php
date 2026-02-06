@@ -46,7 +46,9 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
       add_filter( 'user_contactmethods', array( $this, 'update_contactmethods' ), 10, 1 );
       
       global $fv_simpler_seo_version;
-      if( get_option('fv_simpler_seo_version') != $fv_simpler_seo_version ) {
+      if ( get_option('fv_simpler_seo_version') != $fv_simpler_seo_version ) {
+        update_option( 'fv_simpler_seo_version', $fv_simpler_seo_version, false );
+
         $this->activate();
       }
 
@@ -94,7 +96,6 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
   
   
   function activate() {
-    global $fv_simpler_seo_version;
     $fvseop_options = ( get_option('aioseop_options') ) ? get_option('aioseop_options') : array();
     if( /*isset($fvseop_options['aiosp_shorten_slugs']) && $fvseop_options['aiosp_shorten_slugs'] || */!isset($fvseop_options['aiosp_shorten_slugs']) ) {
       update_option( $this->plugin_slug.'_deferred_notices', 'FV Simpler SEO will from now on automatically shorten your new post slugs to 3 most important keywords. You can disable this option in its <a href="'.$this->get_admin_page_url().'">Settings</a>.' );     
@@ -112,8 +113,55 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     
     $fvseop_options = array_merge( $fvseop_default_options, $fvseop_options );
     update_option( 'aioseop_options', $fvseop_options );
-    
-    update_option('fv_simpler_seo_version', $fv_simpler_seo_version);
+
+    /**
+     * Upgrade database to new meta keys
+     * - _aioseop_description -> _aioseo_description
+     * - _aioseop_keywords -> _aioseo_keywords
+     * - _aioseop_title -> _aioseo_title
+     */
+    global $wpdb;
+    if ( empty( $fvseop_options['convert_meta_keys'] ) ) {
+      $fvseop_options['convert_meta_keys'] = true;
+      update_option( 'aioseop_options', $fvseop_options );
+
+      /**
+       * Backup old meta keys that belong to orignal All in One SEO Pack,
+       * as we are going to overwrite these.
+       */
+      $wpdb->update(
+        $wpdb->postmeta,
+        array( 'meta_key' => '_aioseo_description_backup' ),
+        array( 'meta_key' => '_aioseo_description' )
+      );
+      $wpdb->update(
+        $wpdb->postmeta,
+        array( 'meta_key' => '_aioseo_keywords_backup' ),
+        array( 'meta_key' => '_aioseo_keywords' )
+      );
+      $wpdb->update(
+        $wpdb->postmeta,
+        array( 'meta_key' => '_aioseo_title_backup' ),
+        array( 'meta_key' => '_aioseo_title' )
+      );
+
+      // Upgrade
+      $wpdb->update(
+        $wpdb->postmeta,
+        array( 'meta_key' => '_aioseo_description' ),
+        array( 'meta_key' => '_aioseop_description' )
+      );
+      $wpdb->update(
+        $wpdb->postmeta,
+        array( 'meta_key' => '_aioseo_keywords' ),
+        array( 'meta_key' => '_aioseop_keywords' )
+      );
+      $wpdb->update(
+        $wpdb->postmeta,
+        array( 'meta_key' => '_aioseo_title' ),
+        array( 'meta_key' => '_aioseop_title' )
+      );
+    }
   }
 
 
@@ -146,7 +194,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
   
   function description_for_excerpt( $excerpt ) {
     global $post;
-    if( empty( $post->post_excerpt) && $description = get_post_meta( $post->ID, '_aioseop_description', true ) ) {
+    if( empty( $post->post_excerpt) && $description = get_post_meta( $post->ID, '_aioseo_description', true ) ) {
       if( strlen($description) > 0 ) {
         return $description;
       }
@@ -161,7 +209,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     global $post;
     if( !is_singular() ) {
       if( stripos($post->post_content,'<!--more-->') === false ) {  //   If there is no read more tag it should show just the description.
-        $description = trim( get_post_meta( $post->ID, '_aioseop_description', true ) );
+        $description = trim( get_post_meta( $post->ID, '_aioseo_description', true ) );
         if( strlen($description) > 0 ) {
           return $description;        
         } else if( isset($post->post_type) && ( $post == 'post' || $post == 'page' ) ) {
@@ -276,7 +324,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     
     $post = $wp_query->get_queried_object();
     
-    return get_option('show_on_front') == 'page' && is_page() && $post->ID == get_option('page_on_front');
+    return get_option('show_on_front') === 'page' && is_page() && ! empty( $post->ID ) && $post->ID === absint( get_option('page_on_front') );
   }
   
   function is_static_posts_page()
@@ -285,7 +333,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     
     $post = $wp_query->get_queried_object();
     
-    return get_option('show_on_front') == 'page' && is_home() && ! empty( $post->ID ) && $post->ID == get_option('page_for_posts');
+    return get_option('show_on_front') === 'page' && is_home() && ! empty( $post->ID ) && $post->ID === absint( get_option('page_for_posts') );
   }
 
   /**
@@ -516,21 +564,19 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
       } else if( $objCheckPaging->is_category ) {
         if( isset($wp_query->query['category_name']) ) {
           $objCat = get_category_by_path( $wp_query->query['category_name'] ); 
-          $iCatId = $objCat->term_id;
+          if( isset( $objCat->term_id ) ) {
+            $sLink = get_category_link( $objCat->term_id );
+          }
         }
-        if( isset($iCatId) ) {
-          $sLink = get_category_link($iCatId);
-        }
-        
+
       } else if( $objCheckPaging->is_tag ) {
         if( isset($wp_query->query['tag']) ) {
           $objTag = get_term_by( 'slug', $wp_query->query['tag'], 'post_tag' ); 
-          $tag_id = $objTag->term_id;
+          if( isset( $objTag->term_id ) ) {
+            $sLink = get_term_link( $objTag->term_id, 'post_tag' );
+          }
         }
-        if( isset($tag_id) ) {
-          $sLink = get_term_link( $tag_id, 'post_tag' );
-        }
-        
+
       } else if( $objCheckPaging->is_author ) {
         if( isset($wp_query->query['author_name']) ) {
           $objAuthor = get_user_by( 'slug', $wp_query->query['author_name'] ); 
@@ -573,7 +619,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     }
 
     /// Let's do this also if longer title is specified or if it's homepage
-    if ($fvseop_options['aiosp_rewrite_titles'] || ( is_object( $post ) && isset($post->ID) && get_post_meta($post->ID, "_aioseop_title", true) ) || is_home() )
+    if ($fvseop_options['aiosp_rewrite_titles'] || ( is_object( $post ) && isset($post->ID) && get_post_meta($post->ID, "_aioseo_title", true) ) || is_home() )
     {
       ob_start(array($this, 'output_callback_for_title')); // this ob_start is matched with ob_end_flush in wp_head
     }
@@ -595,64 +641,60 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     {
       return;
     }
-                
+
     global $wp_query, $fvseop_options, $wp_locale;
 
     $post = $wp_query->get_queried_object();
-                
-        //Add link rel="next/prev" when displaying archive
-        global $wp_rewrite;
-                
-        if($wp_rewrite->using_permalinks() && (is_category() || is_tag() || is_tax())){
-            $taxonomy = $wp_query->tax_query->queries[0]["taxonomy"];
-            $term = $wp_query->tax_query->queries[0]["terms"][0];
-                
-            $prev = "";
-            $next = "";
-              
-            $page = 0;
-              
-            if(isset($wp_query->query["paged"]))
-                $page = intval($wp_query->query["paged"]);
-                
-            $posts_per_page = $wp_query->query_vars["posts_per_page"];
-            $found_posts = $wp_query->found_posts;
-            $root = get_term_link($term,$taxonomy);                        
-            
-            
-            if($page){
-                    
-                //set prev links
-                if($page-1<2){
-                    $prev = user_trailingslashit( trailingslashit($root) );
-                }else{
-                    $prev = user_trailingslashit( trailingslashit($root).'page/'.($page-1) );
-                }
-                    
-                //set next link
-                if($found_posts>$posts_per_page*$page){
-                    $next = user_trailingslashit( trailingslashit($root).'page/'.($page+1) );
-                }
-                  
-            }else{
-                //set next link if necessary
-                if($found_posts > $posts_per_page){
-                    $next = user_trailingslashit( trailingslashit($root).'page/2/' );
-                }
-                   
+
+    // Add link rel="next/prev" when displaying archive
+    global $wp_rewrite;
+
+    if ( $wp_rewrite->using_permalinks() && ( is_category() || is_tag() || is_tax() ) ){
+
+      // If the term exists, we can get the taxonomy and term from $wp_query->tax_query
+      if ( ! empty( $wp_query->tax_query->queries[0] ) ) {
+        $prev = false;
+        $next = false;
+
+        $taxonomy  = $wp_query->tax_query->queries[0]["taxonomy"];
+        $term      = $wp_query->tax_query->queries[0]["terms"][0];
+        $term_link = get_term_link( $term,$taxonomy );
+
+        if ( ! is_wp_error( $term_link ) ) {
+          $posts_per_page = absint( $wp_query->query_vars["posts_per_page"] );
+          $found_posts    = absint( $wp_query->found_posts );
+          $paged          = ! empty( $wp_query->query["paged"] ) ? absint( $wp_query->query["paged"] ) : 0;
+
+          
+          if ( $paged ) {
+            if ( $paged - 1 < 2 ) {
+              $prev = user_trailingslashit( trailingslashit( $term_link ) );
+            } else {
+              $prev = user_trailingslashit( trailingslashit( $term_link ) . 'page/'. ( $paged - 1 ) );
             }
-            
-            if($prev){
-                echo "<link rel='prev' href='$prev' />";
+
+            if ( $found_posts > $posts_per_page * $paged ){
+              $next = user_trailingslashit( trailingslashit( $term_link ) . 'page/'. ( $paged + 1 ) );
             }
-                
-            if($next){
-                echo "<link rel='next' href='$next' />";
+
+          } else {
+            if ( $found_posts > $posts_per_page ){
+              $next = user_trailingslashit( trailingslashit( $term_link ) . 'page/2/' );
             }
-            // end adding link rel='next/prev'
-               
+          }
+
+          if ( $prev ) {
+            echo "<link rel='prev' href='" . esc_attr( $prev ) . "' />\n";
+          }
+
+          if ( $next ) {
+            echo "<link rel='next' href='" . esc_attr( $next ) . "' />\n";
+          }
         }
-                
+      }
+
+    }
+
     $meta_string = null;
 
     if (is_single() || is_page())
@@ -718,7 +760,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     }
     elseif ($this->is_static_posts_page() && !$fvseop_options['aiosp_dynamic_postspage_keywords']) // and if option = use page set keywords instead of keywords from recent posts
     {
-      $keywords = stripcslashes($this->internationalize(get_post_meta($post->ID, "_aioseop_keywords", true)));
+      $keywords = stripcslashes($this->internationalize(get_post_meta($post->ID, "_aioseo_keywords", true)));
     }
     else
     {
@@ -1116,7 +1158,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
   {
     global $fvseop_options;
 
-    $description = ! empty( $post->ID ) ? get_post_meta($post->ID, "_aioseop_description", true) : false;
+    $description = ! empty( $post->ID ) ? get_post_meta($post->ID, "_aioseo_description", true) : false;
     $description = trim(stripcslashes($this->internationalize( $description )));
 
     if (!$description)
@@ -1310,7 +1352,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     {
       // we're not in the loop :(
       $authordata = get_userdata($post->post_author);
-      $title = $this->internationalize(get_post_meta($post->ID, "_aioseop_title", true));
+      $title = $this->internationalize(get_post_meta($post->ID, "_aioseo_title", true));
                         
       $post_type_obj = get_post_type_object( get_post_type( $post->ID ) );
       $post_type_name = $post_type_obj->labels->name;
@@ -1454,7 +1496,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
       }
       else
       {
-        $title = $this->internationalize(get_post_meta($post->ID, "_aioseop_title", true));
+        $title = $this->internationalize(get_post_meta($post->ID, "_aioseo_title", true));
         
         if (!$title)
         {
@@ -1739,7 +1781,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
 
           $id = is_attachment() ? $post->post_parent : $post->ID; // if attachment then use parent post id
 
-          $keywords_i = stripcslashes($this->internationalize(get_post_meta($id, "_aioseop_keywords", true)));
+          $keywords_i = stripcslashes($this->internationalize(get_post_meta($id, "_aioseo_keywords", true)));
           $keywords_i = str_replace('"', '', $keywords_i);
                   
           if (isset($keywords_i) && !empty($keywords_i))
@@ -1860,9 +1902,9 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
       $noindex = isset( $_POST["fvseo_noindex"] ) ? true : false;       
       $nofollow = isset( $_POST["fvseo_nofollow"] ) ? true : false;             
         
-      delete_post_meta($id, '_aioseop_keywords');
-      delete_post_meta($id, '_aioseop_description');
-      delete_post_meta($id, '_aioseop_title');
+      delete_post_meta($id, '_aioseo_keywords');
+      delete_post_meta($id, '_aioseo_description');
+      delete_post_meta($id, '_aioseo_title');
       delete_post_meta($id, '_aioseop_titleatr');
       delete_post_meta($id, '_aioseop_menulabel');
       delete_post_meta($id, '_aioseop_custom_canonical');   
@@ -1876,17 +1918,17 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
 
       if (isset($keywords) && !empty($keywords))
       {
-        add_post_meta($id, '_aioseop_keywords', $keywords);
+        add_post_meta($id, '_aioseo_keywords', $keywords);
       }
 
       if (isset($description) && !empty($description))
       {
-        add_post_meta($id, '_aioseop_description', $description);
+        add_post_meta($id, '_aioseo_description', $description);
       }
 
       if (isset($title) && !empty($title) && $title != get_the_title( $id ) )
       {
-        add_post_meta($id, '_aioseop_title', $title);
+        add_post_meta($id, '_aioseo_title', $title);
       }
         
       if (isset($fvseo_titleatr) && !empty($fvseo_titleatr))
@@ -2054,12 +2096,12 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
     $titles = $wpdb->get_var(
       "SELECT count(*) FROM {$wpdb->postmeta}
       WHERE meta_key = '$title_meta'
-      AND post_id NOT IN ( SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_aioseop_title' )"
+      AND post_id NOT IN ( SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_aioseo_title' )"
     );
     $metadesc = $wpdb->get_var(
       "SELECT count(*) FROM {$wpdb->postmeta}
       WHERE meta_key = '$description_meta'
-      AND post_id NOT IN ( SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_aioseop_description' )"
+      AND post_id NOT IN ( SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_aioseo_description' )"
     );
     $import_sum = $metadesc + $titles;
     
@@ -3162,7 +3204,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
         $seo_titles = $wpdb->get_results(
           "SELECT post_id, meta_value FROM {$wpdb->postmeta}
           WHERE meta_key = '$title_meta_value'
-          AND post_id NOT IN ( SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_aioseop_title' )"
+          AND post_id NOT IN ( SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_aioseo_title' )"
         );
         
         $titles_updated = 0;
@@ -3171,14 +3213,14 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
             break;
           }
           
-          update_post_meta( $stitle->post_id, '_aioseop_title', $stitle->meta_value);
+          update_post_meta( $stitle->post_id, '_aioseo_title', $stitle->meta_value);
           $titles_updated++;
         }
         
         $meta_desc = $wpdb->get_results(
           "SELECT post_id, meta_value FROM {$wpdb->postmeta}
           WHERE meta_key = '$desc_meta_value'
-          AND post_id NOT IN ( SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_aioseop_description' )"
+          AND post_id NOT IN ( SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_aioseo_description' )"
         );
 
         $description_updated = 0;
@@ -3187,7 +3229,7 @@ class FV_Simpler_SEO_Pack extends FV_Simpler_SEO_Plugin
             break;
           }
           
-          update_post_meta( $mdesc->post_id, '_aioseop_description', $mdesc->meta_value);
+          update_post_meta( $mdesc->post_id, '_aioseo_description', $mdesc->meta_value);
           $description_updated++;
         }
         
@@ -3532,7 +3574,7 @@ add_meta_box( 'fv_simpler_seo_import', 'Import', array( $this, 'admin_settings_i
 
     if ( is_singular() ) {
       global $post;
-      if( !$description = stripcslashes( get_post_meta($post->ID, '_aioseop_description', true) ) ) {
+      if( !$description = stripcslashes( get_post_meta($post->ID, '_aioseo_description', true) ) ) {
         $description = wp_trim_words(strip_shortcodes(strip_tags($post->post_content)), 20, ' &hellip;');
       }
       
@@ -3541,7 +3583,7 @@ add_meta_box( 'fv_simpler_seo_import', 'Import', array( $this, 'admin_settings_i
       $description = htmlspecialchars(strip_tags($description));
           
       
-      if( !$title = stripcslashes( get_post_meta($post->ID, '_aioseop_title', true) ) ) {
+      if( !$title = stripcslashes( get_post_meta($post->ID, '_aioseo_title', true) ) ) {
         $title = strip_tags( get_the_title() );
       }
       
@@ -4016,27 +4058,37 @@ src="//c.statcounter.com/'.$sc_project.'/0/'.$security.'/1/"
   
   
   function manage_category_process_action(){
-    if( !isset( $_POST['fv_seo_category_update'] ) ){
+    if ( ! isset( $_POST['fv_seo_category_update'] ) ) {
       return;
     }
-    
+
+    if ( ! current_user_can( 'manage_categories' ) ) {
+      return;
+    }
+
+    if ( ! wp_verify_nonce( $_POST['fv_seo_category_update_nonce'], 'fv_seo_category_update_nonce' ) ) {
+      wp_die(
+        __( 'FV Simpler SEO: Save Category SEO Titles failed due to security check.', 'fv_seo' ),
+        'FV Simpler SEO: Save Category SEO Titles',
+        array(
+          'back_link' => true
+        )
+      );
+    }
+
     $seo_titles = $_POST['fvseo_title'];
-    if( isset($seo_titles) && !empty($seo_titles) ){
-      $category_titles = get_option('aioseop_category_titles');
-      
-      if( !$category_titles){
-        $category_titles = array();
-      }
-      
-      foreach($seo_titles as $term_id => $title ){
-        if(  strlen(trim($title)) > 0 ){
-          $category_titles[$term_id] = $title;
+    if ( ! empty( $seo_titles ) && is_array( $seo_titles ) ){
+      $category_titles = get_option( 'aioseop_category_titles', array() );
+
+      foreach ( $seo_titles as $term_id => $title ){
+        if ( strlen( trim( $title ) ) > 0 ) {
+          $category_titles[ absint( $term_id ) ] = sanitize_text_field( $title );
         }
       }
-      
-      update_option('aioseop_category_titles',$category_titles);
+
+      update_option( 'aioseop_category_titles', $category_titles );
     }
-    
+
     //clear after process, 
     $_POST = array();
   }
@@ -4057,6 +4109,9 @@ src="//c.statcounter.com/'.$sc_project.'/0/'.$security.'/1/"
       
       var update_fvseo_title_button = "<input class='button button-primary fv_seo_category_update' type='submit' name='fv_seo_category_update' value='Save SEO Titles' style='display:none' />";
       jQuery("div.actions").append(update_fvseo_title_button);
+
+      var update_fvseo_title_button_nonce = "<input type='hidden' name='fv_seo_category_update_nonce' value='<?php echo wp_create_nonce('fv_seo_category_update_nonce'); ?>' />";
+      jQuery("div.actions").append( update_fvseo_title_button_nonce );
       
       jQuery("input.fvseo_title").keydown( fvseo_show_update_button );                         
       jQuery("input.fvseo_title").change( fvseo_show_update_button );
